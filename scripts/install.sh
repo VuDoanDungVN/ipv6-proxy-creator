@@ -1,16 +1,13 @@
 #!/bin/bash
 set -e
 
-# Hàm tạo chuỗi ngẫu nhiên
 random() {
   tr </dev/urandom -dc A-Za-z0-9 | head -c5
   echo
 }
 
-# Mảng các ký tự hexadecimal cho IPv6
 declare -a array=(0 1 2 3 4 5 6 7 8 9 a b c d e f)
 
-# Hàm tạo địa chỉ IPv6 ngẫu nhiên
 gen64() {
   local ip64() {
     printf "%s%s%s%s" "${array[$RANDOM % 16]}" "${array[$RANDOM % 16]}" "${array[$RANDOM % 16]}" "${array[$RANDOM % 16]}"
@@ -18,10 +15,8 @@ gen64() {
   printf "%s:%s:%s:%s:%s\n" "$1" "$(ip64)" "$(ip64)" "$(ip64)" "$(ip64)"
 }
 
-
-# Cài đặt 3proxy
 install_3proxy() {
-  printf "Cài đặt 3proxy...\n"
+  printf "Đang cài đặt 3proxy...\n"
   local URL="https://github.com/z3APA3A/3proxy/archive/3proxy-0.8.6.tar.gz"
   wget -qO- "$URL" | bsdtar -xvf- || { echo "Lỗi: Tải 3proxy thất bại"; exit 1; }
   cd 3proxy-3proxy-0.8.6 || { echo "Lỗi: Không thể chuyển vào thư mục 3proxy"; exit 1; }
@@ -34,7 +29,6 @@ install_3proxy() {
   cd "$WORKDIR"
 }
 
-# Hàm tạo file cấu hình 3proxy
 gen_3proxy() {
   local tmp_config=$(mktemp)
   printf "daemon\n" > "$tmp_config"
@@ -46,7 +40,6 @@ gen_3proxy() {
   printf "flush\n" >> "$tmp_config"
   printf "auth strong\n" >> "$tmp_config"
 
-  # Thêm người dùng từ tệp dữ liệu
   printf "users $(awk -F/ 'BEGIN{ORS=\"\";} {print \$1 \":CL:\" \$2 \" \"}' \"${WORKDATA}\")\n" >> "$tmp_config"
 
     while IFS='/' read user pass ip4 port ip6; do
@@ -58,32 +51,28 @@ gen_3proxy() {
   cp "$tmp_config" /usr/local/etc/3proxy/3proxy.cfg || { echo "Lỗi: Copy cấu hình 3proxy thất bại"; exit 1; }
 }
 
-# Hàm tạo file proxy.txt cho người dùng
 gen_proxy_file_for_user() {
   awk -F '/' '{print $3 ":" $4 ":" $1 ":" $2}' "$WORKDATA" > proxy.txt
 }
 
-
-# Hàm tải file proxy lên dịch vụ lưu trữ
 upload_proxy() {
   local PASS=$(random)
   zip --password "$PASS" proxy.zip proxy.txt || { echo "Lỗi: Nén file proxy thất bại"; exit 1; }
   local URL=$(curl -s --upload-file proxy.zip https://transfer.sh/proxy.zip)
 
-  printf "Proxy đã sẵn sàng! Định dạng: IP:PORT:LOGIN:PASS\n"
+  printf "\nProxy đã sẵn sàng! Định dạng: IP:CỔNG:LOGIN:PASS\n"
   printf "Tải về từ: %s\n" "$URL"
   printf "Mật khẩu: %s\n" "$PASS"
+  printf "\nLưu ý: Hãy nhớ mật khẩu này để giải nén file proxy.zip\n"
 }
 
-# Cài đặt jq để xử lý JSON
 install_jq() {
-  printf "Cài đặt jq...\n"
+  printf "Đang cài đặt jq...\n"
   wget -O jq https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64 || { echo "Lỗi: Tải jq thất bại"; exit 1; }
   chmod +x ./jq || { echo "Lỗi: Không thể cấp quyền chạy cho jq"; exit 1; }
   cp jq /usr/bin || { echo "Lỗi: Không thể copy jq vào /usr/bin"; exit 1; }
 }
 
-# Tạo dữ liệu proxy cho người dùng
 gen_data() {
   local count=0
   while [ "$count" -lt "$COUNT" ]; do
@@ -93,24 +82,24 @@ gen_data() {
   done
 }
 
-
-# Tạo các lệnh iptables để mở cổng
 gen_iptables() {
   local tmp_iptables=$(mktemp)
-  while IFS='/' read user pass ip4 port ip6; do
-    printf "firewall-cmd --permanent --add-port=%s/tcp\n" "$port" >> "$tmp_iptables"
-  done < "$WORKDATA"
+  local ip_count=0
+    while [ "$ip_count" -lt ${#ALLOWED_IPS[@]} ]; do
+         local allowed_ip="${ALLOWED_IPS[$ip_count]}"
+            while IFS='/' read user pass ip4 port ip6; do
+                 printf "firewall-cmd --permanent --add-port=%s/tcp --add-source=%s\n" "$port" "$allowed_ip" >> "$tmp_iptables"
+          done < "$WORKDATA"
+           ((ip_count++))
+    done
   cp "$tmp_iptables" "$WORKDIR/boot_iptables.sh" || { echo "Lỗi: Copy iptables config failed."; exit 1; }
   chmod +x "$WORKDIR/boot_iptables.sh" || { echo "Lỗi: Cấp quyền chạy cho boot_iptables.sh thất bại"; exit 1; }
 
   printf "firewall-cmd --reload\n" >> "$tmp_iptables"
   chmod +x "$tmp_iptables"
   bash "$tmp_iptables" || { echo "Lỗi: Chạy iptables thất bại"; exit 1; }
-
 }
 
-
-# Tạo lệnh cấu hình IPv6
 gen_ifconfig() {
    local tmp_ifconfig=$(mktemp)
   while IFS='/' read user pass ip4 port ip6; do
@@ -121,40 +110,50 @@ gen_ifconfig() {
    bash "$tmp_ifconfig" || { echo "Lỗi: Chạy ifconfig thất bại"; exit 1; }
 }
 
-# Cài đặt các ứng dụng cần thiết
-printf "Cài đặt các ứng dụng...\n"
+printf "Đang cài đặt các ứng dụng...\n"
 yum -y install gcc net-tools bsdtar zip >/dev/null || { echo "Lỗi: Cài đặt ứng dụng thất bại"; exit 1; }
 
-
-# Cài đặt 3proxy
 install_3proxy
 
-# Thiết lập thư mục làm việc
+printf "Thư mục làm việc = %s\n" "/home/proxy-installer"
 WORKDIR="/home/proxy-installer"
 WORKDATA="${WORKDIR}/data.txt"
 mkdir -p "$WORKDIR" && cd "$_" || { echo "Lỗi: Không thể tạo thư mục làm việc"; exit 1; }
 
-# Lấy địa chỉ IP v4 và v6 của máy chủ
 IP4=$(curl -4 -s icanhazip.com) || { echo "Lỗi: Không thể lấy địa chỉ IPv4"; exit 1; }
 IP6=$(curl -6 -s icanhazip.com | cut -f1-4 -d':') || { echo "Lỗi: Không thể lấy địa chỉ IPv6"; exit 1; }
 
 printf "Địa chỉ IP nội bộ = %s. Địa chỉ IPv6 = %s\n" "$IP4" "$IP6"
 
-# Yêu cầu số lượng proxy cần tạo
 read -p "Bạn muốn tạo bao nhiêu proxy? Ví dụ: 500: " COUNT
 
 FIRST_PORT=10000
 LAST_PORT=$(($FIRST_PORT + $COUNT - 1))
 
-# Tạo dữ liệu proxy
+ALLOWED_IPS=()
+printf "Nhập tối đa 5 dải địa chỉ IP được phép truy cập proxy (ví dụ: 192.168.1.0/24). Nhấn Enter để kết thúc:\n"
+while true; do
+  read -p "Dải IP ($(( ${#ALLOWED_IPS[@]} + 1 ))/5): " ALLOWED_IP
+  if [[ -z "$ALLOWED_IP" ]]; then
+      break
+  elif [[ ${#ALLOWED_IPS[@]} -ge 5 ]]; then
+     printf "Bạn đã nhập tối đa 5 dải IP. Kết thúc.\n"
+      break
+  else
+    ALLOWED_IPS+=("$ALLOWED_IP")
+  fi
+done
+
+if [ ${#ALLOWED_IPS[@]} -eq 0 ]; then
+  printf "Không có dải địa chỉ IP nào được nhập. Proxy sẽ không hạn chế địa chỉ truy cập. Điều này có thể khiến proxy bị đánh dấu là open proxy. Bạn nên hạn chế IP truy cập\n"
+fi
+
 gen_data >"$WORKDIR/data.txt"
 gen_iptables
 gen_ifconfig
 
-# Tạo cấu hình 3proxy
-gen_3proxy
+gen_3proxy >/usr/local/etc/3proxy/3proxy.cfg
 
-# Cập nhật rc.local để cấu hình khi khởi động lại
 cat >>/etc/rc.local <<EOF
 bash "$WORKDIR/boot_iptables.sh"
 bash "$WORKDIR/boot_ifconfig.sh"
@@ -164,8 +163,6 @@ EOF
 chmod +x /etc/rc.local || { echo "Lỗi: Không thể cấp quyền chạy cho /etc/rc.local"; exit 1; }
 bash /etc/rc.local || { echo "Lỗi: Chạy rc.local thất bại"; exit 1; }
 
-# Tạo file proxy cho người dùng
 gen_proxy_file_for_user
 
-# Tải lên proxy
 install_jq && upload_proxy
